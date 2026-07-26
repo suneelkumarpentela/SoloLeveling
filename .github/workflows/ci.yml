@@ -33,7 +33,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install deps
-        run: pip install --quiet pytest
+        run: pip install --quiet pytest requests
 
       - name: Run test suite
         run: python -m pytest tests/ -q
