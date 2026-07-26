@@ -5,7 +5,9 @@ The governing example, for every_days = 2:
 
     day1  due    done  -> next due day3
     day1  due    miss  -> misses=1, due day2 as a last chance (warned)
-    day2  grace  miss  -> misses=2, STREAK BREAK, next due day4
+    day2  grace  miss  -> misses=2, STREAK BREAK, still due day3 (no breathing
+                          room from breaking - only a completion resumes the
+                          full cadence)
 
 every_days = 1 must reproduce the previous daily behaviour exactly.
 """
@@ -74,7 +76,10 @@ def test_missed_on_day_one_gets_a_last_chance_on_day_two():
     assert item["warn"] is True
 
 
-def test_missed_twice_breaks_streak_and_resumes_on_day_four():
+def test_missed_twice_breaks_streak_and_reappears_the_next_day():
+    """Breaking the streak earns no cadence breathing room: the task is
+    asked about daily (same grace-day rule as a first miss) until it is
+    actually completed, at which point the full cadence resumes."""
     st = state(every=2)
     st["streak"] = 5
 
@@ -84,12 +89,12 @@ def test_missed_twice_breaks_streak_and_resumes_on_day_four():
     day(st, D2, "s1")                       # miss 2 on the grace day
     assert st["streak"] == 0, "second consecutive miss breaks the streak"
     assert task(st)["consecutive_misses"] == 0, "counter resets after a break"
-    assert task(st)["next_due"] == D4, "resumes cadence from the grace day"
+    assert task(st)["next_due"] == D3, \
+        "a break earns no cadence breathing room - it reappears tomorrow"
 
     engine.build_today(st, D3)
-    assert "s2" not in [i["ref"] for i in st["today"]["items"]]
-    engine.build_today(st, D4)
-    assert "s2" in [i["ref"] for i in st["today"]["items"]]
+    assert "s2" in [i["ref"] for i in st["today"]["items"]], \
+        "must reappear the very next day after a break, not wait out every_days"
 
 
 def test_completing_on_the_grace_day_restarts_the_cadence():

@@ -419,7 +419,17 @@ def test_morning_message_shows_warning_and_ids():
     msg = engine.render_morning(st, {"scored": False})
     assert "Knee exercise (s3)" in msg
     assert engine.WARN_TEXT in msg
-    assert "Avoid:" in msg and "No corn (s4)" in msg
+    assert "No corn (s4)" in msg
+
+
+def test_morning_message_does_not_segregate_do_and_avoid():
+    """The task text itself says what kind of action it is - no headers."""
+    st = base_state()
+    engine.build_today(st, "2026-07-27")
+    msg = engine.render_morning(st, None)
+    assert "Avoid:" not in msg
+    assert "Do:" not in msg
+    assert "No corn (s4)" in msg and "Brush (s1)" in msg
 
 
 def test_scoring_does_not_mutate_static_task_text():

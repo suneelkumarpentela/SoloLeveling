@@ -24,14 +24,21 @@ the checklist only when `next_due` has arrived; `next_due: null` means due now.
 |---|---|
 | completed | `next_due = that day + every_days` |
 | first miss | `next_due = that day + 1` — a last-chance day, flagged ⚠ |
-| second miss | streak breaks, then `next_due = that day + every_days` |
+| second (or any later) miss | streak breaks (if not already broken), `next_due = that day + 1` |
+
+**Breaking the streak earns no cadence breathing room.** Once a task starts
+being missed, it is asked about every single day — same grace-day rule
+whether it's the first miss or the fifth — until it is actually completed.
+Only a completion resumes the full `every_days` interval. This is deliberate:
+falling behind on a task should make it more visible, not less.
 
 Worked example, `every_days: 2`:
 
 ```
 day1  due          done   → next due day3
 day1  due          miss   → misses=1, back on day2 as a last chance
-day2  last chance  miss   → misses=2, STREAK BREAKS, next due day4
+day2  last chance  miss   → misses=2, STREAK BREAKS, still due day3 (no
+                            breathing room from the break)
 day2  last chance  done   → next due day4  (measured from the day it was done)
 ```
 

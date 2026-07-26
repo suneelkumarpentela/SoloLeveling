@@ -361,8 +361,12 @@ def score_day(state: dict, directives: dict) -> dict:
         for task in breakers:
             task["consecutive_misses"] = 0
             if task["id"] in static_ids:
-                # Grace day is spent; resume the normal cadence from here.
-                task["next_due"] = shift(date_str, every_days(task))
+                # Breaking the streak does not earn the task any breathing
+                # room - it reappears tomorrow, same as a first miss. Only an
+                # actual completion resumes the full every_days cadence; a
+                # task you keep missing is asked about daily until you catch
+                # up on it, not once every `every_days`.
+                task["next_due"] = shift(date_str, 1)
     elif total > 0 and completed == total:
         state["streak"] = state.get("streak", 0) + 1
     # else: hold
@@ -622,13 +626,9 @@ def render_unparsed(directives: dict) -> list[str]:
     return ["", f'{len(bad)} {noun} not understood — e.g. "{first}"']
 
 
-def _lines(items, kind_filter=None, type_filter=None):
+def _lines(items):
     out = []
     for item in items:
-        if type_filter and item.get("type") != type_filter:
-            continue
-        if kind_filter and item.get("kind") != kind_filter:
-            continue
         line = f"- {item['text']} ({item['ref']})"
         if item.get("every_days", 1) > 1:
             line += f" · every {item['every_days']}d"
@@ -647,12 +647,10 @@ def render_morning(
     items = state["today"]["items"]
     parts = [f"Good morning! Today's list ({state['today']['date']}):"]
 
-    avoid = _lines(items, type_filter="avoid")
-    do = _lines(items, type_filter="do")
-    if avoid:
-        parts += ["", "Avoid:"] + avoid
-    if do:
-        parts += ["", "Do:"] + do
+    # Not segregated by do/avoid - the task text itself says which it is.
+    lines = _lines(items)
+    if lines:
+        parts += [""] + lines
 
     weekly = [
         f"- {t['text']} ({t['id']})"
