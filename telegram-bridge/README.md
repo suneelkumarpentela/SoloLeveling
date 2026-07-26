@@ -1,21 +1,26 @@
-# Telegram ↔ Notion bridge
+# Telegram ↔ Notion daily checklist
 
-The transport layer for the daily checklist system. Claude Cowork cannot reach
-`api.telegram.org` (its sandbox runs a strict egress allowlist), but a GitHub
-Actions runner can. So Actions acts as a dumb pipe in both directions, and
-Notion stays the single source of truth.
+A self-contained daily-checklist system. GitHub Actions is the only component
+that can reach `api.telegram.org`, so it also does the scoring — there is no
+separate Cowork step. Notion holds all state as a single JSON code block on
+one page; the engine (`scripts/engine.py`, `scripts/metrics.py`,
+`scripts/process_replies.py`) is pure Python with no I/O of its own, unit
+tested in `tests/`. See `SPEC.md` for the scoring rules, including static-task
+cadence (`every_days`) — not every task has to be due every day.
 
 ```
-07:30 IST  Actions  →  getUpdates            →  telegram_inbox  (Notion)
-07:45 IST  Cowork   →  reads inbox, scores yesterday, builds today's list
-                                              →  telegram_outbox (Notion)
-08:00 IST  Actions  →  reads outbox          →  sendMessage
-21:45 IST  Cowork   →  builds evening checklist → telegram_outbox
-22:00 IST  Actions  →  reads outbox          →  sendMessage
+08:00 IST  Actions (morning)  →  getUpdates → telegram_inbox (Notion)
+                               →  score yesterday, build today, queue message
+                               →  sendMessage
+22:00 IST  Actions (evening)  →  getUpdates → telegram_inbox (Notion)
+                               →  re-send today's checklist (read-only)
+                               →  sendMessage
 ```
 
-Cowork never touches GitHub or Telegram. It only reads and writes the Notion
-page through its existing connector. No credentials live in any Cowork prompt.
+The morning and evening jobs live in the same workflow but are gated so only
+one runs per trigger — see the comment at the top of `bridge.yml`. Only the
+morning job mutates task state, points or the streak; the evening job only
+reads and queues a message.
 
 ## Privacy note — this repo is public
 
@@ -94,11 +99,25 @@ advanced offset back.
 
 ### 7. Test it
 
-Repo → **Actions** → `telegram-bridge` → **Run workflow**.
+Repo → **Actions** → `telegram-bridge` → **Run workflow**, choosing `morning`
+or `evening`. The morning run should send a checklist message to your bot and
+advance `state/offset.json`. Reply, then run `evening` to confirm the reply
+lands in `telegram_inbox`.
 
-The first run should log `0 update(s)` and `0 pending`. Then send your bot a
-message, run it again, and confirm the text appears in `telegram_inbox` on the
-Notion page and that `state/offset.json` advanced.
+## Local mirror
+
+A separate Claude Cowork task, scheduled daily at 13:00 IST, reads the Notion
+page and writes a read-only snapshot to `daily_tasks.json` at the
+`daily_reminders/` repo root. It is **one-way**: Notion is always the source
+of truth, nothing ever reads this file back, and the Cowork task is
+explicitly forbidden from writing to Notion (the Actions jobs are the sole
+writer there — a second writer would race them).
+
+This file holds real personal task and health text, so it is **deliberately
+untracked** — listed in `.gitignore`, enforced by `tests/test_repo_hygiene.py`
+and the `ci` workflow (see Gotchas below). Any local edits to it are
+overwritten the next time the Cowork task runs; don't rely on it for
+anything but reading the latest snapshot.
 
 ## How dedup works
 
@@ -110,15 +129,37 @@ messages. A message can never be processed twice.
 
 ## Cost
 
-Three ~30-second runs per day ≈ **60 minutes/month**. Public repos get unlimited
+Two ~30-second runs per day ≈ **30 minutes/month**. Public repos get unlimited
 free Actions minutes; private repos get 2,000/month. Free either way.
 
 ## Gotchas
 
-- **GitHub cron drifts.** Scheduled workflows can be delayed several minutes
-  under load. The Cowork runs are staggered 15 minutes ahead of the sends to
-  absorb this. Don't tighten that gap.
+- **GitHub cron drifts.** Scheduled workflows can be delayed under load. The
+  morning guard compares real wall-clock dates (not the nominal schedule
+  time), so a delayed run still scores correctly as long as it lands on the
+  right calendar day. A run delayed past the *next* trigger's time, or a
+  manual re-run performed between midnight and the next scheduled run, can
+  still cause the day-over guard to fire earlier than a user's actual
+  bedtime — avoid manually triggering the morning job overnight.
+- **A fully skipped day is not backfilled.** If a run never happens at all for
+  a whole day, that day gets no `history` row and is not scored — the next
+  successful run logs a `WARNING` naming the gap, but there is no way to
+  reconstruct what actually happened that day.
 - **Scheduled workflows are disabled after 60 days of repo inactivity.** The
   daily offset commit keeps the repo active and avoids this.
-- **Both scripts run on every trigger** and are individually idempotent, so an
-  extra, missed, or delayed run is self-healing.
+- **The morning and evening jobs are gated by `if:`** so only one runs per
+  trigger — see the comment at the top of `bridge.yml`. This matters because
+  Notion's read-modify-write is not atomic; two jobs racing on the same page
+  would silently lose one job's write.
+- **Dynamic task ids (`d*`, `w*`) are never reused**, even after the task is
+  completed or dropped (`state["id_seq"]` tracks the next id). Reusing an id
+  would splice two unrelated tasks' historical metrics together.
+- **Static-task cadence (`every_days`) and `next_due` are capped at 90 days.**
+  A typo in either field would otherwise strand a task invisibly for years —
+  see SPEC.md.
+- **`ci.yml` runs the full test suite on every push/PR**, including a
+  hygiene check that fails the build if `daily_tasks.json` (the local Notion
+  mirror) is ever staged, tracked, or appears in history. That workflow
+  checks out full history (`fetch-depth: 0`) specifically so that check is
+  meaningful — the `bridge.yml` workflow stays shallow since it doesn't need
+  history.

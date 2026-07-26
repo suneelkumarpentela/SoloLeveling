@@ -1,0 +1,39 @@
+name: ci
+
+# Runs the whole test suite on every push/PR, including the repo-hygiene
+# checks in tests/test_repo_hygiene.py - if daily_tasks.json (the local Notion
+# mirror, see README.md "Local mirror") is ever staged, tracked, or committed,
+# this fails the build.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: telegram-bridge
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, not the default shallow clone - the "never
+          # committed" hygiene check needs real history to mean anything.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install --quiet pytest
+
+      - name: Run test suite
+        run: python -m pytest tests/ -q

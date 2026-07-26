@@ -1,20 +1,33 @@
 name: telegram-bridge
 
 # Times are UTC. Suneel is IST (UTC+5:30).
-#   02:00 UTC = 07:30 IST  -> pull overnight replies BEFORE the 7:45 Cowork run
-#   02:30 UTC = 08:00 IST  -> send the morning checklist
-#   16:30 UTC = 22:00 IST  -> send the evening checklist
+#   02:30 UTC = 08:00 IST  -> morning: score yesterday, build + send today's list
+#   16:30 UTC = 22:00 IST  -> evening: re-send today's list, read-only
 #
-# Every run does fetch-then-send. Both steps are idempotent (offset-based /
-# sent-flag-based), so an extra or delayed run is harmless and self-healing.
+# IMPORTANT: the morning and evening jobs below are gated with `if:` on
+# github.event.schedule (or the workflow_dispatch mode input) so that only
+# ONE of them ever runs for a given trigger. Notion's read-modify-write is not
+# atomic, so if both jobs ran unconditionally on every trigger they would run
+# in parallel within the same workflow run and race on the same page.
 on:
   schedule:
-    - cron: '0 2 * * *'
     - cron: '30 2 * * *'
     - cron: '30 16 * * *'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Which cycle to run'
+        required: true
+        default: morning
+        type: choice
+        options:
+          - morning
+          - evening
 
-# Never let two runs mutate the offset or the Notion page at once.
+# Belt-and-braces: even with the if: gates above, this also serialises any
+# overlapping trigger (e.g. a manual dispatch fired while a scheduled run is
+# still in progress) so two runs can never mutate the offset or the Notion
+# page at once.
 concurrency:
   group: telegram-bridge
   cancel-in-progress: false
@@ -27,7 +40,10 @@ defaults:
     working-directory: telegram-bridge
 
 jobs:
-  bridge:
+  morning:
+    if: >-
+      github.event.schedule == '30 2 * * *' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'morning')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -47,6 +63,66 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
         run: python scripts/fetch_updates.py
+
+      - name: Score yesterday, build today, queue morning message
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+        run: python scripts/process_replies.py morning
+
+      - name: Send queued messages to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+        run: python scripts/send_outbox.py
+
+      - name: Commit offset if it changed
+        run: |
+          if [[ -n "$(git status --porcelain state/offset.json)" ]]; then
+            git config user.name  "telegram-bridge[bot]"
+            git config user.email "actions@github.com"
+            git add state/offset.json
+            git commit -m "chore: advance telegram offset [skip ci]"
+            git push
+          else
+            echo "offset unchanged"
+          fi
+
+  evening:
+    if: >-
+      github.event.schedule == '30 16 * * *' ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'evening')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install --quiet requests
+
+      - name: Fetch Telegram replies into Notion
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+        run: python scripts/fetch_updates.py
+
+      - name: Re-send today's checklist (read-only)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+        run: python scripts/process_replies.py evening
 
       - name: Send queued messages to Telegram
         env:
