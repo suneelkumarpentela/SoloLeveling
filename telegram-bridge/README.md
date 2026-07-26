@@ -60,8 +60,14 @@ the page has to be explicitly shared with the integration.
 
 ### 4. Create the repo and push
 
+The repo root is `daily_reminders/`, one level up from this folder — Actions
+only discovers workflows in a repo-root `.github/workflows/`, so
+`.github/workflows/bridge.yml` lives there rather than inside `telegram-bridge/`.
+The workflow sets `working-directory: telegram-bridge` so its script and
+state paths still resolve.
+
 ```bash
-cd telegram-bridge
+cd ..   # daily_reminders/
 git init -b main
 git add .
 git commit -m "feat: telegram-notion bridge"
