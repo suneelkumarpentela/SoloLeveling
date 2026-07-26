@@ -22,6 +22,10 @@ concurrency:
 permissions:
   contents: write
 
+defaults:
+  run:
+    working-directory: telegram-bridge
+
 jobs:
   bridge:
     runs-on: ubuntu-latest
