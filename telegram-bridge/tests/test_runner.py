@@ -180,6 +180,19 @@ def test_evening_with_no_snapshot_is_a_noop(monkeypatch):
     assert st["telegram_outbox"] == []
 
 
+def test_evening_skips_a_stale_snapshot_instead_of_resending_it(monkeypatch, capsys):
+    """If the morning run is badly delayed (or never happened yet today),
+    "today" is still yesterday's already-scored snapshot. Re-sending it would
+    relabel a stale, already-scored day as "today's" checklist."""
+    monkeypatch.setattr(runner, "today_str", lambda: "2026-07-28")
+    st = fresh_state("2026-07-27")  # morning for the 28th hasn't run yet
+
+    runner.run_evening(st)
+
+    assert st["telegram_outbox"] == [], "must not send a stale-dated checklist"
+    assert "skipping" in capsys.readouterr().out
+
+
 # ──────────────────────────── message content ────────────────────────────────
 
 

@@ -99,12 +99,19 @@ Percentage-based scoring (the old 100% / >50% / ≤50% rules) is retired.
 ## Daily cycle
 
 ```
-08:00 IST   fetch replies → score yesterday → build today → render → send
-22:00 IST   fetch replies → apply adds/removes only → re-send today's checklist
+~08:00 IST   fetch replies → score yesterday → build today → render → send
+~22:00 IST   fetch replies → apply adds/removes only → re-send today's checklist
 ```
 
+(The cron triggers actually fire at 05:00/19:00 IST to absorb GitHub's
+scheduling delay — see README.md "GitHub cron drifts." These times are the
+intended delivery target, not the trigger time.)
+
 The 22:00 run never scores. It re-sends the same snapshot built at 08:00 and
-invites additions. All scoring happens the following morning, so replies sent
+invites additions — unless that snapshot isn't actually for today yet (the
+morning run hasn't happened), in which case it skips rather than re-sending
+a stale, already-scored day under today's date. All scoring happens the
+following morning, so replies sent
 any time between 22:00 and 08:00 are picked up together.
 
 ## Reply grammar

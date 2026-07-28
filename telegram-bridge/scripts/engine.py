@@ -724,4 +724,5 @@ def render_evening(state: dict, directives: dict | None = None) -> str:
 
     # Evening gets the one-liner: the full reference already went out at 8AM.
     parts += render_help(state, compact=True)
+    parts += ["", "Is today's Suneel better than that of yesterday?"]
     return "\n".join(parts)

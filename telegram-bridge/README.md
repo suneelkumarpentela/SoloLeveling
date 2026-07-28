@@ -9,18 +9,22 @@ tested in `tests/`. See `SPEC.md` for the scoring rules, including static-task
 cadence (`every_days`) — not every task has to be due every day.
 
 ```
-08:00 IST  Actions (morning)  →  getUpdates → telegram_inbox (Notion)
-                               →  score yesterday, build today, queue message
-                               →  sendMessage
-22:00 IST  Actions (evening)  →  getUpdates → telegram_inbox (Notion)
-                               →  re-send today's checklist (read-only)
-                               →  sendMessage
+05:00 IST  Actions (morning)  →  getUpdates → telegram_inbox (Notion)
+(targets       →  score yesterday, build today, queue message
+ ~08:00)       →  sendMessage
+19:00 IST  Actions (evening)  →  getUpdates → telegram_inbox (Notion)
+(targets       →  re-send today's checklist (read-only)
+ ~22:00)       →  sendMessage
 ```
+
+The cron triggers fire at 05:00/19:00 IST, three hours ahead of the actual
+08:00/22:00 delivery target — see "GitHub cron drifts" in Gotchas for why.
 
 The morning and evening jobs live in the same workflow but are gated so only
 one runs per trigger — see the comment at the top of `bridge.yml`. Only the
 morning job mutates task state, points or the streak; the evening job only
-reads and queues a message.
+reads and queues a message, and skips entirely if the morning run hasn't
+built today's snapshot yet (see Gotchas).
 
 ## Privacy note — this repo is public
 
@@ -134,13 +138,23 @@ free Actions minutes; private repos get 2,000/month. Free either way.
 
 ## Gotchas
 
-- **GitHub cron drifts.** Scheduled workflows can be delayed under load. The
-  morning guard compares real wall-clock dates (not the nominal schedule
-  time), so a delayed run still scores correctly as long as it lands on the
-  right calendar day. A run delayed past the *next* trigger's time, or a
-  manual re-run performed between midnight and the next scheduled run, can
-  still cause the day-over guard to fire earlier than a user's actual
-  bedtime — avoid manually triggering the morning job overnight.
+- **GitHub cron drifts - a lot, not a little.** `schedule:` has no delivery
+  guarantee, and in practice both jobs here landed 1-3.5 hours late
+  (morning worse than evening), most likely because `:00`/`:15`/`:30`/`:45`
+  are the most congested minutes on GitHub's shared scheduler and this
+  repo's original slots (`:30`) sat right on one. The crons are now set
+  three hours ahead of the real 08:00/22:00 IST target (see the comment at
+  the top of `bridge.yml`) so a typical delay lands close to on time instead
+  of hours late, and an undelayed run just arrives a bit early - the
+  preferred failure direction here. If the delay pattern changes, re-measure
+  with `gh run list --workflow=bridge.yml --json event,conclusion,createdAt`
+  filtered to `event == "schedule"` before adjusting further.
+  The morning guard itself compares real wall-clock dates (not the nominal
+  schedule time), so a delayed run still scores correctly as long as it
+  lands on the right calendar day. A run delayed past the *next* trigger's
+  time, or a manual re-run performed between midnight and the next scheduled
+  run, can still cause the day-over guard to fire earlier than a user's
+  actual bedtime — avoid manually triggering the morning job overnight.
 - **A fully skipped day is not backfilled.** If a run never happens at all for
   a whole day, that day gets no `history` row and is not scored — the next
   successful run logs a `WARNING` naming the gap, but there is no way to
@@ -151,6 +165,10 @@ free Actions minutes; private repos get 2,000/month. Free either way.
   trigger — see the comment at the top of `bridge.yml`. This matters because
   Notion's read-modify-write is not atomic; two jobs racing on the same page
   would silently lose one job's write.
+- **The evening run refuses a stale snapshot.** If `today.date` in Notion
+  isn't actually today (the morning run hasn't happened yet — badly delayed,
+  or skipped), evening skips instead of re-sending yesterday's already-scored
+  checklist relabelled as today's.
 - **Dynamic task ids (`d*`, `w*`) are never reused**, even after the task is
   completed or dropped (`state["id_seq"]` tracks the next id). Reusing an id
   would splice two unrelated tasks' historical metrics together.

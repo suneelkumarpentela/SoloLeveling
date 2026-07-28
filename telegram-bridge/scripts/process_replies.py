@@ -112,6 +112,17 @@ def run_evening(state: dict) -> None:
         print("evening: no snapshot to re-send, skipping")
         return
 
+    today = today_str()
+    if snapshot.get("date") != today:
+        # The morning run hasn't built today's snapshot yet (badly delayed,
+        # or skipped). Re-sending it anyway would relabel yesterday's list as
+        # today's under a wrong date, or worse, resend an already-scored day.
+        print(
+            f"evening: snapshot is for {snapshot.get('date')}, not today "
+            f"({today}) - morning hasn't run yet, skipping"
+        )
+        return
+
     # Surface parse errors, but do not consume or mutate anything.
     inbox = state.get("telegram_inbox") or []
     directives = engine.parse_directives([m.get("text", "") for m in inbox])

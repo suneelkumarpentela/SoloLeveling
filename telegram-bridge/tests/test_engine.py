@@ -199,6 +199,14 @@ def test_evening_uses_the_compact_one_liner():
     assert len(engine.render_help(st, compact=True)) == 2
 
 
+def test_evening_message_ends_with_the_reflection_question():
+    st = base_state()
+    engine.build_today(st, "2026-07-27")
+    evening = engine.render_evening(st)
+    lines = evening.splitlines()
+    assert lines[-1] == "Is today's Suneel better than that of yesterday?"
+
+
 def test_telegram_cannot_remove_a_static_task():
     d = engine.parse_directives(["/drop s1, d2, w3"])
     assert d["remove"] == ["d2", "w3"]
